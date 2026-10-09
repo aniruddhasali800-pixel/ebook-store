@@ -448,6 +448,10 @@ scripts/setup-env.ts        appends the keys .env is missing; never rewrites one
 * Every status change appends a `PaymentEvent`, and every refund or complaint decision appends a
   `CaseEvent` (actor, from, to, note) in the same transaction as the write.
 * The status API returns only two status strings — no VPA, UTR or customer data.
+* The live poll answers only for a signed-in staff session, and only with headlines: type, channel,
+  the same words the order screen already shows. The visitor rows behind the head count hold a
+  browser-invented id, a page path and a timestamp, and are deleted once they pass ninety seconds —
+  no IP, no user agent, nothing that joins two visits.
 * Provider notifications are honoured only over a verified signature on the raw body, only for the
   provider the order was created with, and only for the exact frozen amount. `queryStatus()`
   cannot settle a card order.
@@ -461,6 +465,11 @@ scripts/setup-env.ts        appends the keys .env is missing; never rewrites one
 * `/complaint/<code>` is public by design — the code is 18 hex characters from `randomBytes`, and
   it exposes one thread and its answer, never a list. Complaints are otherwise only ever read
   scoped to the order token they were filed from.
+* Nothing fetches a file because a field said so. Every stored address passes `storage-path.ts`
+  first — this host, that folder, one name — and the download stays behind the order token. The
+  trade worth knowing: a *book's* blob URL, if it leaked, would serve the file without that token,
+  the same way a copied `storage/` folder did on the disk. Covers have no such pretence; they are
+  public objects by design.
 
 ---
 
@@ -509,6 +518,15 @@ count below zero (it records what it could not give instead), a physical count s
 rather than the new total so the ledger still explains itself, `-0` is never written as a movement, and
 an item with no par level reads "not set" rather than "low" on every row. The module is pure Node with
 no database in it, which is why those rules can be asserted at all.
+
+`tests/storage.test.ts` is the same idea on the other side of the move: `storage-path.ts` decides
+what a stored file address may say, and it holds no server, so the door can be tested without a
+bucket. It accepts the shape object storage hands back and refuses what the disk era left behind —
+a bare `storage/books/x.pdf`, a `./` relative path, plain text — plus `http`, a host that merely
+ends with the storage host's name, a port, credentials in the URL, a query string, and a path that
+nests. Dots are settled by the URL parser before the folder is judged, so `..` can only land inside
+`storage/`, never climb out of it, and a test says that rather than leaving it to a comment. The
+writer uses the same module to name an object, so it cannot produce a name the reader would refuse.
 
 `tests/storage.test.ts` holds the door that decides which file address the app will fetch. It accepts
 the shape Vercel Blob hands back, and refuses the disk-era values an old row or a typed-in field could
