@@ -1,0 +1,363 @@
+// UPI direct-payment ordering system.
+// SQLite has no native enum support in Prisma, so status columns are String and
+// the controlled vocabularies live in src/lib/payments/status.ts, enforced by
+// the transition table in the payment service. Switching to Postgres later only
+// means re-declaring these as @enums in this file.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts (migrate) and in the
+// driver adapter (runtime), not in this file.
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  /// ADMIN | CASHIER (see src/lib/auth/roles.ts)
+  role         String   @default("CASHIER")
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ordersVerified Order[]          @relation("VerifiedOrders")
+  settingsEdits  PaymentSetting[] @relation("SettingsEditor")
+  booksReviewed  Book[]           @relation("ReviewedBooks")
+  refundsReviewed RefundRequest[] @relation("ReviewedRefunds")
+  complaintsAnswered Complaint[]  @relation("AnsweredComplaints")
+  stockMovements StockMovement[]  @relation("StockMovements")
+
+  @@index([role])
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  label     String
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+}
+
+model MenuItem {
+  id            String  @id @default(cuid())
+  name          String
+  description   String?
+  category      String  @default("Main")
+  priceInPaise  Int
+  available     Boolean @default(true)
+  sortOrder     Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orderItems OrderItem[]
+  /// The shelf row this item depletes when a settled order is verified, if the
+  /// shop tracks it at all. Absent means "sold without counting stock".
+  stockItem  StockItem?
+
+  @@index([category, available])
+}
+
+/// An ebook in the shop. Shares the Order/payment machinery with cafe items —
+/// see Order.channel.
+model Book {
+  id           String  @id @default(cuid())
+  slug         String  @unique
+  title        String
+  subtitle     String?
+  author       String
+  blurb        String
+  /// Newline-separated "what is inside" lines.
+  contents     String?
+  priceInPaise Int
+  /// Optional strike-through anchor price. Null hides it.
+  listPriceInPaise Int?
+  format       String  @default("PDF + EPUB")
+  pages        Int?
+  /// Absolute path or path relative to the project root. Null until a file is attached.
+  filePath     String?
+  /// Uploaded cover, relative to storage/covers/. Null falls back to the drawn cover.
+  coverPath    String?
+  category     String  @default("AI")
+  published    Boolean @default(true)
+  /// Set when a title is submitted for review and cleared once an admin decides.
+  submittedAt  DateTime?
+  reviewedAt   DateTime?
+  reviewedById String?
+  reviewedBy   User?   @relation("ReviewedBooks", fields: [reviewedById], references: [id])
+  reviewNote   String?
+  sortOrder    Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orderItems OrderItem[]
+  complaints Complaint[]
+
+  @@index([published, sortOrder])
+  @@index([submittedAt])
+}
+
+model Order {
+  id         String @id @default(cuid())
+  /// Human readable code shown in the UI and used as the UPI `tr` reference.
+  orderId    String @unique
+  /// Random, unguessable token used in the customer payment URL.
+  token      String @unique
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  /// AWAITING_PAYMENT | IN_KITCHEN | READY | COMPLETED | CANCELLED
+  status     String @default("AWAITING_PAYMENT")
+
+  /// CAFE (a food order, fulfilled through the kitchen board) | BOOKS (an ebook
+  /// order, fulfilled by unlocking a download). Defaults to CAFE so existing rows
+  /// and existing order creation keep working unchanged.
+  channel    String @default("CAFE")
+
+  /// Payment provider id, e.g. UPI_DIRECT. See src/lib/payments/registry.ts
+  paymentMethod  String @default("UPI_DIRECT")
+  /// PENDING | PAYMENT_VERIFICATION_PENDING | PAID | FAILED | CANCELLED
+  paymentStatus  String @default("PENDING")
+  /// Bank UTR / provider transaction reference recorded during verification.
+  paymentReference String?
+  /// Payee VPA the customer was asked to pay to.
+  upiIdUsed        String?
+
+  currency          String @default("INR")
+  subtotalInPaise   Int
+  totalInPaise      Int
+  note              String?
+
+  paidAt        DateTime?
+  verifiedById  String?
+  verifiedBy    User?   @relation("VerifiedOrders", fields: [verifiedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items  OrderItem[]
+  events PaymentEvent[]
+  refunds RefundRequest[]
+  complaints Complaint[]
+  stockMovements StockMovement[]
+
+  @@index([paymentStatus, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id               String  @id @default(cuid())
+  orderId          String
+  order            Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId       String?
+  menuItem         MenuItem? @relation(fields: [menuItemId], references: [id])
+  bookId           String?
+  book             Book?   @relation(fields: [bookId], references: [id])
+  /// Snapshot of name + price at ordering time so later menu edits never change
+  /// what a customer already agreed to pay.
+  name             String
+  unitPriceInPaise Int
+  quantity         Int
+  lineTotalInPaise Int
+  createdAt        DateTime @default(now())
+
+  @@index([orderId])
+}
+
+model PaymentSetting {
+  id              String   @id @default("default")
+  businessName    String
+  upiPayeeName    String?
+  /// AES-256-GCM ciphertext; plaintext never leaves the server.
+  upiIdEncrypted  String
+  /// Display-safe form, e.g. "biz***@ybl".
+  upiIdMasked     String
+  enabled         Boolean  @default(true)
+  currency        String   @default("INR")
+  notesPrefix     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  updatedById     String?
+  updatedBy       User?    @relation("SettingsEditor", fields: [updatedById], references: [id])
+}
+
+/// Append-only audit trail. Every status change writes a row here, including
+/// changes a future provider webhook would make (actorType = PROVIDER).
+model PaymentEvent {
+  id         String   @id @default(cuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// CONFIRMED_BY_CUSTOMER | STATUS_CHANGED | SETTINGS_CHANGED | PROVIDER_NOTIFICATION
+  type       String
+  /// CUSTOMER | STAFF | SYSTEM | PROVIDER
+  actorType  String
+  actorId    String?
+  fromStatus String?
+  toStatus   String?
+  reference  String?
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+/// A customer's request to get their money back. Separate axis from
+/// `Order.paymentStatus`: a PAID order stays PAID, because direct UPI gives this
+/// site no way to reverse a transfer. The refund is a promise the shop keeps by
+/// paying the customer back itself, and `REFUNDED` is only written once a human
+/// confirms that happened.
+///
+/// REQUESTED | APPROVED | REFUNDED | REJECTED  (see src/lib/refunds.ts)
+model RefundRequest {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  reason      String
+  amountInPaise Int
+  currency      String @default("INR")
+  /// Where the shop should send the money back to, if the customer offered one.
+  payoutVpa     String?
+  contactNote   String?
+
+  status        String @default("REQUESTED")
+  requestedAt   DateTime @default(now())
+  /// The end of the review window: two working days after `requestedAt`.
+  reviewDueAt   DateTime
+  /// The payment instant the 24-hour eligibility window was measured against.
+  paidAtSnapshot DateTime?
+
+  reviewedAt    DateTime?
+  reviewedById  String?
+  reviewedBy    User?   @relation("ReviewedRefunds", fields: [reviewedById], references: [id])
+  decisionNote  String?
+  /// UTR / reference of the transfer the shop sent back. Required for REFUNDED.
+  payoutReference String?
+  notifiedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  events CaseEvent[]
+
+  @@index([status, reviewDueAt])
+  @@index([orderId])
+}
+
+/// A complaint or query a customer sent to the shop about a book, an order, or
+/// anything else on the site. OPEN | ANSWERED | CLOSED.
+model Complaint {
+  id      String @id @default(cuid())
+
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  bookId  String?
+  book    Book?   @relation(fields: [bookId], references: [id], onDelete: SetNull)
+
+  fromName  String
+  contact   String?
+  subject   String
+  body      String
+  /// The page the complaint came from, so staff can see what the buyer saw.
+  source    String @default("receipt")
+  /// Unguessable code for the public status page. A complaint filed without an
+  /// order link still needs somewhere for the buyer to read the shop's reply.
+  viewToken String?  @unique
+
+  status      String @default("OPEN")
+  createdAt   DateTime @default(now())
+  answeredAt  DateTime?
+  answeredById String?
+  answeredBy  User?   @relation("AnsweredComplaints", fields: [answeredById], references: [id])
+  reply       String?
+  updatedAt   DateTime @updatedAt
+
+  events CaseEvent[]
+
+  @@index([status, createdAt])
+}
+
+/// Append-only trail for the two review queues, mirroring `PaymentEvent` for
+/// payments. `kind` is REFUND | COMPLAINT | BOOK.
+model CaseEvent {
+  id        String @id @default(cuid())
+  kind      String
+  refundId  String?
+  refund    RefundRequest? @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  complaintId String?
+  complaint Complaint?     @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  actorType String
+  actorId   String?
+  fromStatus String?
+  toStatus   String?
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([kind, createdAt])
+}
+
+/// Units in the shop right now, for the things the cafe actually runs out of.
+/// Deliberately its own row rather than a column on `MenuItem`: a till item can be
+/// sold without the shop counting anything (a filter coffee needs no ledger), one
+/// stock row can cover several items that share a sack of rice, and the admin may
+/// want to track packaging nobody orders by name.
+model StockItem {
+  id             String  @id @default(cuid())
+  name           String  @unique
+  /// What one unit is, shown beside the count: "plates", "bags", "litres".
+  unit           String  @default("units")
+  /// The number a count form last wrote, less the verified sales since.
+  quantityOnHand Int     @default(0)
+  /// Flagged as low at or below this. Zero means no level has been set yet, which
+  /// the page shows as unset rather than as an item that is always low.
+  parLevel       Int     @default(0)
+  /// The till item whose settled sales deplete this row. Unique, so one item can
+  /// never drain two shelves. Null keeps the row informational only.
+  menuItemId     String? @unique
+  menuItem       MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  movements StockMovement[]
+
+  @@index([name])
+}
+
+/// Append-only unit ledger, the stock side of `PaymentEvent`. `quantityOnHand`
+/// answers "how many are there"; this answers "how did it get there", so a count
+/// that disagrees with the sales can be traced to the row that caused it.
+model StockMovement {
+  id           String  @id @default(cuid())
+  stockItemId  String
+  stockItem    StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  /// SALE | COUNT | RESTOCK | WRITE_OFF  (see src/lib/inventory/ledger.ts)
+  kind         String
+  /// Signed change in units. A COUNT stores the difference it applied, not the
+  /// new total, so the running balance stays derivable from the ledger alone.
+  deltaUnits   Int
+  /// On-hand figure after this row was applied.
+  balanceAfter Int
+  /// The settled order a SALE came from. Null for movements a human recorded.
+  orderId      String?
+  order        Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  /// Staff who recorded it. A SALE is credited to whoever verified the payment,
+  /// because that is the human who decided the money had arrived.
+  actorId      String?
+  actor        User?   @relation("StockMovements", fields: [actorId], references: [id], onDelete: SetNull)
+  /// Units a SALE asked for that were not on the shelf. The count never goes
+  /// negative and the shortfall is never dropped — money the shop received is
+  /// real, so the gap is recorded and shown instead of silently absorbed.
+  shortByUnits Int     @default(0)
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([stockItemId, createdAt])
+  @@index([createdAt])
+}

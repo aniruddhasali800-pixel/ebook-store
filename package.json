@@ -1,0 +1,50 @@
+{
+  "name": "upi-pay",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "staff:list": "tsx scripts/staff.ts list",
+    "staff:add": "tsx scripts/staff.ts add",
+    "staff:rotate": "tsx scripts/staff.ts rotate",
+    "setup:env": "node scripts/setup-env.mjs",
+    "test": "node --env-file=.env --import tsx --test tests/*.test.ts",
+    "test:e2e": "node scripts/e2e-upi-flow.mjs"
+  },
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "18.0.5",
+    "next": "16.3.8",
+    "prisma": "7.10.0",
+    "qrcode": "^1.5.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pngjs": "^6.0.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
+    "sharp": "^0.35.5",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

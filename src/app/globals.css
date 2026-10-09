@@ -1,0 +1,298 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafafa;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* ---------------------------------------------------------------------------
+   Bookstore hero — four generated frames played as one 3D move.
+
+   Scroll writes a single number, --p, on .hero-stage. Everything below is
+   derived from it in CSS so a scroll frame costs no React render.
+   ------------------------------------------------------------------------- */
+
+@property --p {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+.hero-track {
+  position: relative;
+  height: 340vh;
+}
+
+.hero-stage {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  overflow: hidden;
+  background: #0b0a09;
+  /* Deep enough that the forward travel reads as speed without any frame
+     passing through the camera and emptying the stage. */
+  perspective: 1400px;
+  perspective-origin: 50% 44%;
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+}
+
+.hero-scene {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  /* p*p makes the rise accelerate — the last third has to feel fast. */
+  transform:
+    rotateX(calc(var(--tilt-x) + (0.5 - var(--p)) * 5deg))
+    rotateY(calc(var(--tilt-y) + var(--p) * -2.5deg))
+    translate3d(0, calc(var(--p) * var(--p) * -15%), calc(var(--p) * 70px))
+    scale(calc(1 + var(--p) * 0.06));
+  will-change: transform;
+}
+
+.hero-layer {
+  position: absolute;
+  /* Oversized so a frame can climb out of view without exposing the background. */
+  inset: -14% -8%;
+  transform-style: preserve-3d;
+  will-change: transform, opacity;
+}
+
+.hero-layer img {
+  object-fit: cover;
+  object-position: 50% 56%;
+}
+
+/* Frame 1 — the book on the desk. Recedes and drops out of frame. */
+.hero-layer-1 {
+  transform: translate3d(0, calc(var(--p) * 10%), calc(var(--p) * -200px))
+    scale(calc(1 + var(--p) * 0.06));
+  opacity: calc(1 - clamp(0, calc((var(--p) - 0.14) * 4.2), 1));
+}
+
+/* Frame 2 — lifting off. Comes forward, starts the climb. */
+.hero-layer-2 {
+  transform: translate3d(0, calc(-8% + var(--p) * -34%), calc(40px + var(--p) * 110px))
+    scale(calc(1.02 + var(--p) * 0.08));
+  opacity: min(
+    clamp(0, calc((var(--p) - 0.04) * 4.6), 1),
+    calc(1 - clamp(0, calc((var(--p) - 0.38) * 3.6), 1))
+  );
+}
+
+/* Frame 3 — pages elevating. Steeper rise, slight roll. */
+.hero-layer-3 {
+  transform:
+    translate3d(0, calc(-14% + var(--p) * -30%), calc(80px + var(--p) * 130px))
+    rotate(calc((var(--p) - 0.4) * -2.5deg)) scale(calc(1.03 + var(--p) * 0.1));
+  opacity: min(
+    clamp(0, calc((var(--p) - 0.26) * 3.8), 1),
+    calc(1 - clamp(0, calc((var(--p) - 0.62) * 3.4), 1))
+  );
+}
+
+/* Frame 4 — the data vortex. Rises least: it carries the closing copy. */
+.hero-layer-4 {
+  transform: translate3d(0, calc(-2% + var(--p) * -5%), calc(120px + var(--p) * 140px))
+    scale(calc(1.04 + var(--p) * 0.12));
+  opacity: clamp(0, calc((var(--p) - 0.46) * 2.9), 1);
+}
+
+.hero-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 42%, transparent 30%, rgb(11 10 9 / 0.72) 100%),
+    linear-gradient(to top, rgb(11 10 9 / 0.94) 2%, rgb(11 10 9 / 0.35) 34%, transparent 62%);
+}
+
+.hero-copy {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: min(46svh, 420px);
+  max-width: 72rem;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+@media (min-width: 640px) {
+  .hero-copy {
+    padding-inline: 2rem;
+  }
+}
+
+.hero-slide {
+  position: absolute;
+  bottom: 12%;
+  left: 1.25rem;
+  right: 1.25rem;
+  max-width: 44rem;
+  will-change: transform, opacity;
+}
+
+@media (min-width: 640px) {
+  .hero-slide {
+    left: 2rem;
+    right: 2rem;
+  }
+}
+
+.hero-eyebrow {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #f2b45c;
+}
+
+.hero-title {
+  margin-top: 0.6rem;
+  font-size: clamp(1.9rem, 5.6vw, 3.4rem);
+  line-height: 1.04;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  color: #fff;
+  text-wrap: balance;
+}
+
+.hero-body {
+  margin-top: 0.85rem;
+  max-width: 34rem;
+  font-size: clamp(0.9rem, 1.6vw, 1.05rem);
+  line-height: 1.55;
+  color: rgb(228 228 231 / 0.76);
+}
+
+/*
+ * Each block fades in only after the one before it has fully left, so two
+ * headlines never sit on top of each other mid-scroll.
+ */
+.hero-slide-1 {
+  opacity: calc(1 - clamp(0, calc((var(--p) - 0.06) * 7), 1));
+  transform: translate3d(0, calc(var(--p) * -22px), 0);
+}
+
+.hero-slide-2 {
+  opacity: min(
+    clamp(0, calc((var(--p) - 0.22) * 7), 1),
+    calc(1 - clamp(0, calc((var(--p) - 0.46) * 7), 1))
+  );
+  transform: translate3d(0, calc((0.34 - var(--p)) * 60px), 0);
+}
+
+.hero-slide-3 {
+  opacity: clamp(0, calc((var(--p) - 0.62) * 6), 1);
+  transform: translate3d(0, calc((0.7 - var(--p)) * 50px), 0);
+}
+
+.hero-scroll-hint {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgb(244 244 245 / 0.55);
+  opacity: calc(1 - clamp(0, calc(var(--p) * 12), 1));
+}
+
+.hero-scroll-hint i {
+  width: 1px;
+  height: 46px;
+  background: linear-gradient(to bottom, rgb(244 244 245 / 0.7), transparent);
+  animation: hero-tick 1.9s ease-in-out infinite;
+}
+
+@keyframes hero-tick {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-track {
+    height: 260vh;
+  }
+  .hero-stage {
+    perspective: 1000px;
+  }
+  .hero-scroll-hint {
+    display: none;
+  }
+}
+
+/*
+ * Reduced motion: no pinning, no travel. One frame and all three copy blocks
+ * read as a normal static hero.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .hero-track {
+    height: auto;
+  }
+  .hero-stage {
+    position: relative;
+    height: auto;
+    perspective: none;
+    overflow: visible;
+  }
+  .hero-scene {
+    position: relative;
+    inset: auto;
+    transform: none;
+    aspect-ratio: 16 / 9;
+  }
+  .hero-layer {
+    inset: 0;
+    transform: none !important;
+  }
+  .hero-layer-1 {
+    opacity: 1;
+  }
+  .hero-layer-2,
+  .hero-layer-3,
+  .hero-layer-4 {
+    opacity: 0;
+  }
+  .hero-copy {
+    position: relative;
+    inset: auto;
+    height: auto;
+    padding: 1.5rem 1.25rem 2.5rem;
+  }
+  .hero-slide {
+    position: relative;
+    inset: auto;
+    max-width: none;
+    opacity: 1 !important;
+    transform: none !important;
+    margin-block-end: 1.25rem;
+  }
+  .hero-scroll-hint {
+    display: none;
+  }
+}
