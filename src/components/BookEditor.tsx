@@ -114,7 +114,7 @@ export function BookEditor({ book, isNew = false }: { book?: BookDraft; isNew?: 
           <input
             name="filePath"
             defaultValue={book?.filePath ?? ''}
-            placeholder="storage/books/slug.pdf"
+            placeholder="set by an upload, or paste the stored address"
             className={FIELD + ' font-mono text-xs'}
           />
         </label>

@@ -119,7 +119,7 @@ export async function createOrder(input: {
     noteText: `Order #${orderId}`,
   });
 
-  publishActivity({
+  await publishActivity({
     type: 'order',
     channel: 'CAFE',
     headline: `New order #${order.orderId}`,

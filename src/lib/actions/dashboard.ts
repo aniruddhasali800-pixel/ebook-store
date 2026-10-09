@@ -7,6 +7,7 @@ import { rupeesToPaise } from '@/lib/money';
 import { extendSession, requireAdmin, requireStaff } from '@/lib/auth/session';
 import { publishActivity } from '@/lib/activity';
 import { saveBookFileUpload, saveCoverUpload } from '@/lib/uploads';
+import { storedObjectFor } from '@/lib/storage-path';
 import type { PaymentStatus } from '@/lib/payments/status';
 import type { StaffFormState } from '@/lib/actions/staff';
 
@@ -152,8 +153,8 @@ export async function saveBookAction(
   if (book.pages !== null && (!Number.isInteger(book.pages) || book.pages <= 0 || book.pages > 9999)) {
     return { ok: false, message: 'Pages must be a whole number between 1 and 9999.' };
   }
-  if (book.filePath && !/^storage[\\/]/.test(book.filePath)) {
-    return { ok: false, message: 'The file path has to start with storage/.' };
+  if (book.filePath && !storedObjectFor(book.filePath)) {
+    return { ok: false, message: 'That file address is not one this shop stored. Attach the PDF instead.' };
   }
 
   const clash = await prisma.book.findUnique({ where: { slug: book.slug }, select: { id: true } });
@@ -211,7 +212,7 @@ export async function saveBookAction(
         });
 
     if (!id) {
-      publishActivity({
+      await publishActivity({
         type: 'book',
         channel: 'BOOKS',
         headline: `New title submitted: ${book.title}`,
@@ -279,7 +280,7 @@ export async function reviewBookAction(
     },
   });
 
-  publishActivity({
+  await publishActivity({
     type: 'book',
     channel: 'BOOKS',
     headline: decision === 'publish' ? `Published: ${book.title}` : `Rejected: ${book.title}`,

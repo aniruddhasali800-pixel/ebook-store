@@ -4,15 +4,17 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 
 type ActivityEvent = {
-  id: string;
+  /** Database id, used as the cursor into the queue. Mirrors src/lib/activity.ts */
+  id: number;
   type: string;
-  channel?: string;
+  channel?: string | null;
   headline: string;
-  detail?: string;
-  href?: string;
+  detail?: string | null;
+  href?: string | null;
   at: number;
-  replayed?: boolean;
 };
+
+const FALLBACK_POLL_MS = 4_000;
 
 const TONE: Record<string, string> = {
   arrival: 'bg-sky-100 text-sky-800 ring-sky-200',
@@ -67,13 +69,15 @@ function subscribeToPrefs(onChange: () => void): () => void {
 /**
  * The "right now" strip on the staff dashboards.
  *
- * One EventSource carries everything: the server replays the recent feed on
- * connect, then pushes each new event as it happens. The count of live visitors
- * travels inside the arrival events rather than as a second connection, so an
- * idle dashboard holds one socket and no traffic.
+ * The page renders the queue it was given, then keeps asking the server for
+ * whatever has been added since its last look. Polling, not a held-open socket: a
+ * serverless runtime cannot carry a connection for a whole shift, and the queue
+ * now lives in the database, so a payment settled on one machine is news on every
+ * dashboard. `cursor` is the highest event id this page has already seen — the
+ * first answer is only ever things that happened after the page was rendered.
  *
  * `scope` is which half of the shop this dashboard belongs to. A cafe till and a
- * book shop share the stream, so the chime has to know whose money it is announcing.
+ * book shop share one queue, so the chime has to know whose money it is announcing.
  *
  * The two switches are stored in localStorage and read through
  * `useSyncExternalStore`: the preference is a browser setting, not application
@@ -106,10 +110,11 @@ export function LiveActivity({
     () => false,
   );
 
-  const seen = useRef(new Set(initialEvents.map((event) => event.id)));
+  /** Highest event id already shown, so a later answer never re-rings an old payment. */
+  const cursor = useRef(initialEvents.reduce((highest, event) => Math.max(highest, event.id), 0));
   const audio = useRef<AudioContext | null>(null);
-  // The stream handler is installed once and reads the switches through a ref, so
-  // turning the chime on never has to reconnect the connection.
+  // The poll loop is installed once and reads the switches through a ref, so
+  // turning the chime on never has to restart anything.
   const prefs = useRef({ sound: false, desktop: false, scope });
 
   useEffect(() => {
@@ -117,41 +122,53 @@ export function LiveActivity({
   }, [soundOn, desktopOn, scope]);
 
   useEffect(() => {
-    const source = new EventSource('/api/activity/stream');
+    let stopped = false;
+    let everyMs = FALLBACK_POLL_MS;
 
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
-    source.addEventListener('activity', (raw) => {
-      let event: ActivityEvent;
+    const lookForNews = async () => {
       try {
-        event = JSON.parse((raw as MessageEvent).data);
-      } catch {
-        return;
-      }
-      if (seen.current.has(event.id)) return;
-      seen.current.add(event.id);
-      setEvents((current) => [event, ...current].slice(0, 24));
-      // An arrival carries the running count; any event means the stream is alive.
-      if (event.type === 'arrival') {
-        const detail = event.detail ?? '';
-        const match = /active:(\d+)/.exec(detail);
-        if (match) setActiveNow(Number(match[1]));
-      }
-      // Replayed history is the feed the page asked for, not news. Events from the
-      // other half of the shop are not news here either.
-      if (event.replayed || event.channel !== prefs.current.scope || !LOUD.has(event.type)) return;
-      setLastAlert(event);
-      if (prefs.current.sound) {
-        audio.current ??= openAudioContext();
-        if (!playChime(audio.current, event.type)) setNeedsGesture(true);
-      }
-      if (prefs.current.desktop) showDesktopNotice(event);
-    });
+        const response = await fetch(`/api/activity/poll?since=${cursor.current}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`poll returned ${response.status}`);
+        const payload = (await response.json()) as {
+          events?: ActivityEvent[];
+          visitors?: number;
+          pollMs?: number;
+        };
+        if (stopped) return;
+        setConnected(true);
+        if (typeof payload.visitors === 'number') setActiveNow(payload.visitors);
+        if (payload.pollMs && payload.pollMs >= 1_000) everyMs = payload.pollMs;
 
+        for (const event of payload.events ?? []) {
+          // Two answers can overlap; the cursor is what makes that harmless.
+          if (event.id <= cursor.current) continue;
+          cursor.current = event.id;
+          setEvents((current) => [event, ...current].slice(0, 24));
+          // A quiet dashboard is the point: only this half of the shop, and only
+          // the two kinds of money news, are allowed to make a sound.
+          if (event.channel !== prefs.current.scope || !LOUD.has(event.type)) continue;
+          setLastAlert(event);
+          if (prefs.current.sound) {
+            audio.current ??= openAudioContext();
+            if (!playChime(audio.current, event.type)) setNeedsGesture(true);
+          }
+          if (prefs.current.desktop) showDesktopNotice(event);
+        }
+      } catch {
+        if (!stopped) setConnected(false);
+      }
+    };
+
+    // Look once straight away: the page was rendered with a head count of zero,
+    // and "nobody is here" is worth correcting before the first beat arrives.
+    void lookForNews();
+    const stopTicking = createTicker(() => void lookForNews(), () => everyMs);
+    // Re-render on the clock so the "12s ago" labels do not go stale.
     const clock = setInterval(() => setEvents((current) => [...current]), 30_000);
 
     return () => {
-      source.close();
+      stopped = true;
+      stopTicking();
       clearInterval(clock);
     };
   }, []);
@@ -289,9 +306,7 @@ export function LiveActivity({
                 )}
               </span>
               {event.detail ? (
-                <span className="mt-0.5 block truncate text-xs text-zinc-500">
-                  {event.detail.replace(/ · active:\d+$/, '')}
-                </span>
+                <span className="mt-0.5 block truncate text-xs text-zinc-500">{event.detail}</span>
               ) : null}
             </span>
             <span className="shrink-0 text-[11px] tabular-nums text-zinc-400">{ago(event.at)}</span>
@@ -305,6 +320,36 @@ export function LiveActivity({
       </ul>
     </section>
   );
+}
+
+/**
+ * A timer that keeps its beat while the tab is in the background.
+ *
+ * A hidden page gets its `setInterval` slowed to roughly one run a minute, and the
+ * cashier who alt-tabs to the bank app to check a UTR is precisely the person who
+ * must not miss the chime. A worker owns its own clock and is left alone, so the
+ * feed keeps asking every few seconds either way. If the browser will not hand over
+ * a worker, the interval fallback still works — it is only slower while hidden, and
+ * the strip says so by going to "Reconnecting" only when a request actually fails.
+ */
+function createTicker(onTick: () => void, getDelayMs: () => number): () => void {
+  try {
+    const worker = new Worker(
+      URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 1000)'], { type: 'text/javascript' })),
+    );
+    let elapsed = 0;
+    worker.onmessage = () => {
+      elapsed += 1;
+      if (elapsed * 1_000 >= getDelayMs()) {
+        elapsed = 0;
+        onTick();
+      }
+    };
+    return () => worker.terminate();
+  } catch {
+    const handle = setInterval(onTick, getDelayMs());
+    return () => clearInterval(handle);
+  }
 }
 
 /**

@@ -1,18 +1,20 @@
 // UPI direct-payment ordering system.
-// SQLite has no native enum support in Prisma, so status columns are String and
-// the controlled vocabularies live in src/lib/payments/status.ts, enforced by
-// the transition table in the payment service. Switching to Postgres later only
-// means re-declaring these as @enums in this file.
+// Status columns are String on purpose, not database enums: the controlled
+// vocabularies live in src/lib/payments/status.ts and are enforced by the
+// transition table in the payment service, so a new state is a code review
+// rather than a schema migration the shop has to schedule.
 
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
 }
 
-// Prisma 7: the connection URL lives in prisma.config.ts (migrate) and in the
-// driver adapter (runtime), not in this file.
+// Prisma 7: no URL here. The CLI takes it from prisma.config.ts for the commands
+// that connect, and the running app passes it to a driver adapter
+// (src/lib/db-client.ts), so a machine with no database yet can still generate a
+// client.
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 model User {
@@ -360,4 +362,37 @@ model StockMovement {
 
   @@index([stockItemId, createdAt])
   @@index([createdAt])
+}
+
+/// What the staff dashboards are reading right now: a short notification queue,
+/// the signal that something just happened at the counter or in the book shop.
+/// It is a queue and not an audit trail — `PaymentEvent` and `CaseEvent` are the
+/// record — so old rows are trimmed. Rows must never outlive the shift that
+/// would act on them.
+model ActivityEntry {
+  id        Int      @id @default(autoincrement())
+  /// arrival | order | claim | settled | payment | refund | complaint | book | stock
+  type      String
+  /// CAFE | BOOKS, or null for an event about the site as a whole. Only an event
+  /// with a channel is allowed to make a dashboard ring, so a book somebody bought
+  /// cannot interrupt a cafe till.
+  channel   String?
+  headline  String
+  detail    String?
+  href      String?
+  createdAt DateTime @default(now())
+
+  @@index([id])
+}
+
+/// Somebody who was on a page in the last ninety seconds. `key` is a random id
+/// the browser invented for this tab — no cookie, no IP, no fingerprint — and
+/// rows are pruned to the window as they are read, so this is a head count and
+/// not a log of who came.
+model VisitorSlot {
+  key        String   @id
+  page       String
+  lastSeenAt DateTime @default(now())
+
+  @@index([lastSeenAt])
 }

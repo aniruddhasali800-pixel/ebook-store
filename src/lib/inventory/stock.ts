@@ -132,7 +132,7 @@ export async function consumeStockForPaidOrder(
   // paying customer was served something the shop had not counted.
   const short = applied.filter((row) => row.shortByUnits > 0);
   if (short.length > 0) {
-    publishActivity({
+    await publishActivity({
       type: 'stock',
       channel: 'CAFE',
       headline: `Order #${order.orderId} oversold ${short.map((row) => row.name).join(', ')}`,
@@ -142,7 +142,7 @@ export async function consumeStockForPaidOrder(
   }
   const low = applied.filter((row) => row.shortByUnits === 0 && row.nowLow);
   if (low.length > 0) {
-    publishActivity({
+    await publishActivity({
       type: 'stock',
       channel: 'CAFE',
       headline: `${low.map((row) => row.name).join(', ')} reached its par level`,

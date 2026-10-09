@@ -116,7 +116,7 @@ export async function transitionPayment(input: TransitionInput) {
       await consumeStockForPaidOrder({ id: order.id, orderId: order.orderId }, input.actorId ?? null);
     } catch (error) {
       console.error('Stock was not updated for a settled order', order.orderId, error);
-      publishActivity({
+      await publishActivity({
         type: 'stock',
         channel: order.channel,
         headline: `Stock count is now wrong for order #${order.orderId}`,

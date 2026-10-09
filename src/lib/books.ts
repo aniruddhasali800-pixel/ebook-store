@@ -1,11 +1,10 @@
 import 'server-only';
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import path from 'node:path';
 import { prisma } from '@/lib/db';
 import { publishActivity } from '@/lib/activity';
 import { formatINR } from '@/lib/money';
+import { storedObjectFor } from '@/lib/storage-path';
+import { readStoredFile } from '@/lib/storage';
 import { loadPayeeTarget, PaymentSettingsError } from '@/lib/settings';
 import { getPaymentProvider, resolvePaymentProviderId } from '@/lib/payments/registry';
 import { generateOrderCode, OrderCreationError, type CreatedOrder } from '@/lib/orders';
@@ -84,7 +83,7 @@ export async function createBookOrder(input: {
     select: { id: true, orderId: true, token: true, totalInPaise: true },
   });
 
-  publishActivity({
+  await publishActivity({
     type: 'order',
     channel: 'BOOKS',
     headline: `New book order #${orderId}`,
@@ -105,24 +104,17 @@ export async function createBookOrder(input: {
 }
 
 /**
- * The tail of a stored path once its leading `storage/` is removed, or null when
- * the path is not inside it. `.` and `..` segments are rejected, so joining the
- * result back onto `storage/` can never resolve above it.
+ * Where a title's file stands, so the dashboard can warn before someone pays.
+ *
+ * A stored address is checked against the storage rules, not against the network:
+ * asking object storage whether a file exists would put a request per title on
+ * every dashboard page load. A file that has since disappeared is found when the
+ * buyer tries to download it, and the download route says so plainly.
  */
-function insideStorage(filePath: string | null): string | null {
-  if (!filePath) return null;
-  const relative = filePath.replaceAll('\\', '/').replace(/^storage\/+/, '');
-  if (relative === '' || relative.startsWith('/')) return null;
-  const climbs = relative.split('/').some((part) => part === '..' || part === '.');
-  return climbs ? null : relative;
-}
-
-/** Where a title's file stands, so the dashboard can warn before someone pays. */
-export function fileStatusFor(filePath: string | null): 'none' | 'ok' | 'missing' | 'outside' {
+export function fileStatusFor(filePath: string | null): 'none' | 'ok' | 'outside' {
   if (!filePath) return 'none';
-  const relative = insideStorage(filePath);
-  if (relative === null) return 'outside';
-  return existsSync(path.join(process.cwd(), 'storage', relative)) ? 'ok' : 'missing';
+  const object = storedObjectFor(filePath);
+  return object && object.folder === 'books' ? 'ok' : 'outside';
 }
 
 const COVER_CONTENT_TYPES: Record<string, string> = {
@@ -133,36 +125,19 @@ const COVER_CONTENT_TYPES: Record<string, string> = {
 };
 
 /**
- * Public URL for an uploaded cover, or null when the path is not a cover inside
- * `storage/covers/`.
+ * Direct URL for an uploaded cover, or null when the path is not a cover the shop
+ * stored itself.
  *
- * A cover is storefront artwork, so it is served without a paid order — unlike a
- * book file. It still goes through the same path guard, because the database column
- * is editable text and a bad path should not turn this route into a file reader.
+ * A cover is storefront artwork, so it is public — unlike a book file, which only
+ * ever leaves through the paywalled download route. The address still goes through
+ * the same validator, because the database column is editable text and a bad value
+ * should not turn the storefront into a proxy for somebody else's server.
  */
 export function coverUrlFor(coverPath: string | null): string | null {
-  const relative = insideStorage(coverPath);
-  if (!relative || !relative.startsWith('covers/')) return null;
-  const extension = relative.split('.').pop()?.toLowerCase() ?? '';
-  if (!COVER_CONTENT_TYPES[extension]) return null;
-  return `/api/covers/${relative.slice('covers/'.length)}`;
-}
-
-/** Cover bytes addressed from `coverUrlFor`, or null for anything suspicious. */
-export async function readCoverBytes(tail: string): Promise<{ bytes: Buffer; contentType: string } | null> {
-  if (!tail || tail.split('/').some((part) => part === '' || part === '.' || part === '..')) return null;
-  const relative = insideStorage(`storage/covers/${tail}`);
-  if (!relative || !relative.startsWith('covers/')) return null;
-
-  const extension = relative.split('.').pop()?.toLowerCase() ?? '';
-  const contentType = COVER_CONTENT_TYPES[extension];
-  if (!contentType) return null;
-
-  try {
-    return { bytes: await readFile(path.join(process.cwd(), 'storage', relative)), contentType };
-  } catch {
-    return null;
-  }
+  const object = storedObjectFor(coverPath);
+  if (!object || object.folder !== 'covers') return null;
+  const extension = object.fileName.split('.').pop()?.toLowerCase() ?? '';
+  return COVER_CONTENT_TYPES[extension] ? object.url : null;
 }
 
 export type OrderDownload = {
@@ -170,7 +145,7 @@ export type OrderDownload = {
   title: string;
   format: string;
   fileName: string;
-  /** The catalogue's stored path; re-validated by `readBookFile` before any read. */
+  /** The stored address; re-validated by `readBookFile` before any read. */
   filePath: string;
 };
 
@@ -178,8 +153,8 @@ export type OrderDownload = {
  * Titles a settled ebook order may release.
  *
  * The caller must have already checked paymentStatus === 'PAID'; this only
- * resolves the stored paths and drops any title whose file is missing or sits
- * outside the storage directory.
+ * resolves the stored addresses and drops any title whose file is missing or is
+ * not an address this app would have written.
  */
 export async function listOrderDownloads(orderId: string): Promise<OrderDownload[]> {
   const items = await prisma.orderItem.findMany({
@@ -190,15 +165,14 @@ export async function listOrderDownloads(orderId: string): Promise<OrderDownload
   return items.flatMap((item) => {
     const book = item.book;
     if (!book?.filePath) return [];
-    const relative = insideStorage(book.filePath);
-    if (relative === null) return [];
-    if (!existsSync(path.join(process.cwd(), 'storage', relative))) return [];
+    const object = storedObjectFor(book.filePath);
+    if (!object || object.folder !== 'books') return [];
     return [
       {
         bookId: book.id,
         title: book.title,
         format: book.format,
-        fileName: relative.split('/').pop()!,
+        fileName: object.fileName,
         filePath: book.filePath,
       },
     ];
@@ -207,14 +181,8 @@ export async function listOrderDownloads(orderId: string): Promise<OrderDownload
 
 /**
  * Bytes behind one download entry, or null when the file is gone. Re-checks the
- * path rather than trusting the caller to have come through `listOrderDownloads`.
+ * address rather than trusting the caller to have come through `listOrderDownloads`.
  */
 export async function readBookFile(filePath: string): Promise<Buffer | null> {
-  const relative = insideStorage(filePath);
-  if (relative === null) return null;
-  try {
-    return await readFile(path.join(process.cwd(), 'storage', relative));
-  } catch {
-    return null;
-  }
+  return readStoredFile(filePath);
 }

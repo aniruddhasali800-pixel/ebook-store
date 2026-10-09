@@ -21,19 +21,40 @@ Two storefronts share one payment core:
 Both staff areas show the same live strip: how many customers are on the site right now, and an
 arrival, payment, refund or complaint the moment it happens.
 
-Built with Next.js 16 (App Router, Server Actions), Prisma 7 + SQLite, Tailwind 4.
+Built with Next.js 16 (App Router, Server Actions), Prisma 7 + Postgres, Vercel Blob for book files,
+Tailwind 4.
 
 ---
 
 ## Run it
 
+You need a Postgres database before anything else. The app has no other option to fall back on:
+a database on a serverless deployment's disk would be wiped between requests, so a file path would
+have meant an empty shop that appeared to work.
+
 ```bash
 npm install
-npm run setup:env      # writes .env (DATABASE_URL + a random APP_SECRET)
-npm run db:push        # creates dev.db from prisma/schema.prisma
+npm run setup:env      # asks for DATABASE_URL + BLOB_READ_WRITE_TOKEN, writes a random APP_SECRET
+npm run db:push        # creates the tables in that database
 npm run db:seed        # menu, demo UPI payee, 3 ebooks + their PDFs (staff only if SEED_* is set)
 npm run dev            # http://localhost:3000
 ```
+
+`setup:env` prompts for the two secrets without echoing them, and appends a key to `.env` only if
+that key is missing — it never rewrites a file you have already filled in.
+
+* `DATABASE_URL` — any Postgres connection string. On Vercel, Storage → Postgres gives one; for
+  local work, a Docker or a hosted dev database both work. Note `sslmode` behaviour in
+  `src/lib/db-client.ts`: anything that is not a localhost host is contacted over TLS.
+* `BLOB_READ_WRITE_TOKEN` — Vercel Blob. Book PDFs and cover images are stored there, because
+  a deployed function's filesystem is read-only and exists only for the length of the request.
+* `APP_SECRET` — 32 random bytes, hex. Encrypts the payee UPI ID and signs staff sessions.
+
+A database that has tables but no rows still serves every page; only the storefront lists come up
+empty. **Old data does not come along.** The orders, staff accounts and encrypted payee UPI ID in an
+old SQLite file stay in that file: after `db:push` you re-enter the payee in Payment Settings and
+make staff with `npm run staff:add`. Nothing from the old shop is deleted either, so keep `dev.db`
+around until you have read what you needed out of it.
 
 `npm run dev` also serves `/api/...` dev resources; if you open the site as `127.0.0.1` instead of
 `localhost`, Next blocks them and client components never hydrate. `allowedDevOrigins` in
@@ -45,8 +66,8 @@ npm run dev            # http://localhost:3000
 | Cashier | same, with role `CASHIER` | verify payments, decide refunds, answer complaints |
 
 **There is no default password any more.** The seed used to ship `admin@upi.local / Admin#12345`;
-those accounts are still in an old `dev.db` until you rotate them, which is the first thing to do
-on any machine someone else can reach:
+those accounts exist only in an old database, and a freshly pushed one has no staff at all — so the
+first thing on any machine someone else can reach is to make an account you own:
 
 ```bash
 npm run staff:list                          # what exists right now
@@ -65,8 +86,45 @@ days drop out of the two-working-day clock.
 Cards are opt-in: add `CARD_TEST_MODE=1` to `.env` to offer a simulated hosted checkout (see
 *Card payments* below). Without it the app is UPI-only, exactly as before.
 
-Production: `npm run build && npm start`. Set `APP_SECRET` to a stable value — losing it makes
-the stored UPI ID, the card webhook key and all sessions unreadable.
+Production on your own box: `npm run build && npm start`. Set `APP_SECRET` to a stable value —
+losing it makes the stored UPI ID, the card webhook key and all sessions unreadable.
+
+### Deploying to Vercel
+
+Three things about a serverless runtime shaped this code, and they are worth knowing before you
+change any of it:
+
+* The disk is read-only and does not survive the request, so book files are Vercel Blob objects and
+  the schema is Postgres, not a file.
+* There is no one process to be the truth. Presence, the event queue and the chime live in the
+  database, which is why two dashboards on different machines now agree.
+* A function is not allowed to hold a connection open for a whole shift, so the live strip polls
+  every few seconds instead of keeping a socket.
+
+The build script is `prisma generate && next build`. `prisma generate` reads only
+`prisma/schema.prisma`, and `prisma.config.ts` leaves the datasource out until a `DATABASE_URL`
+actually exists — so a builder with no secrets yet still compiles, instead of failing the way it did
+when `env('DATABASE_URL')` was resolved at config load.
+
+1. Storage → Postgres, and Storage → Blob, both on the project. Vercel injects
+   `POSTGRES_URL` / `BLOB_READ_WRITE_TOKEN` for you; this app reads `DATABASE_URL`, so add an
+   environment variable of that name with the same value (the connection string, with
+   `-pooler` in the host if the free tier gives you one).
+2. `APP_SECRET` — the same hex value as the `.env` you seeded with, or a new one plus a re-entered
+   payee UPI ID.
+3. Build, then run the schema once against the real database from your terminal:
+
+   ```bash
+   npm run db:push
+   npm run db:seed          # menu + demo payee + three sample titles
+   npm run staff:add        # the account you will actually sign in with
+   ```
+
+4. Re-enter the payee VPA in Payment Settings. It is stored encrypted with `APP_SECRET`, so the
+   copy in an old local database will not decrypt into a new one.
+
+Nothing here runs `db push` during a deploy on purpose: a build that quietly alters the shop's
+schema is not something to discover after the fact.
 
 ---
 
@@ -142,9 +200,15 @@ Same five moves, with the kitchen replaced by a file:
 5. `/api/dl/<token>/<bookId>` then streams the PDF. It 404s for a cafe order or an unknown title
    and 403s for anything not `PAID`, so the link is safe to leave visible on the receipt page.
 
-Ebook files live under `storage/books/<slug>.pdf` and the catalogue stores the relative path.
-`src/lib/books.ts` refuses to read anything that does not resolve inside `storage/`, and the
-dashboard warns on a title whose file is missing or outside it — before a customer pays for it.
+Book PDFs and covers are objects in Vercel Blob under `storage/books/` and `storage/covers/`, and the
+catalogue stores the full `https://….blob.vercel-storage.com/storage/…` address. `src/lib/storage-path.ts`
+is the one judge of what such an address may say — right host, right folder, one file name, nothing
+after it — and both the writer and every reader go through it, so an address a customer typed into a
+field is treated exactly like one the shop stored itself. The download still streams through
+`/api/dl/<token>/<bookId>` rather than a public blob link, because a leaked blob URL would hand the
+file to anyone the way a copied disk file would have; covers have nothing to hide behind, so they are
+plain absolute URLs. `/dashboard/books` and the review queue name the titles whose address fails the
+test, so a broken one is found before a customer pays for it.
 
 ### UPI URI
 
@@ -181,16 +245,20 @@ complained from a book page — with no order to return to — still has somewhe
 the modules that enforce them, so a rule change moves the page and the code in one edit.
 
 New titles are uploaded with a cover image and the PDF itself, and land in a review queue that
-keeps them off the storefront until an admin publishes; publishing is refused when the file is
-missing, and `reviewBookAction` requires `requireAdmin()` — a cashier reads the queue and cannot
-put a book on sale. Covers are served from `/api/covers/<path>`, which only ever reads inside
-`storage/covers/`.
+keeps them off the storefront until an admin publishes; publishing is refused for a title with no
+file, and `reviewBookAction` requires `requireAdmin()` — a cashier reads the queue and cannot
+put a book on sale. A cover is shown straight from its stored address, so there is no covers route
+left to guard.
 
-Presence is deliberately forgetful: a random id in `sessionStorage`, a beacon to `/api/visit`, a
-90-second in-memory TTL and one Server-Sent-Events stream (`/api/activity/stream`) shared by both
-staff areas. No IP, no user agent, nothing written to a table, no cross-page profile. The dashboard
-answers "is someone on the site now", and ninety seconds later it cannot answer anything about
-them at all.
+Presence is deliberately forgetful, and now says so honestly. A browser invents a random id for the
+tab, keeps it in `sessionStorage`, and beacons it with the page path to `/api/visit`; that is one row
+in `VisitorSlot`, which is deleted once it has not been seen for ninety seconds. No IP, no user
+agent, no cookie, and nothing that survives a closed tab or joins two visits together — but it is a
+table now, because a hosted app has no single process to hold the count in. The staff strip asks
+`/api/activity/poll?since=<id>` every few seconds and only counts what happened after it last looked,
+so the queue in `ActivityEntry` can be read by every dashboard at once. Those rows are trimmed to the
+newest 500, or to three days, whichever comes first: they repeat headlines a staff member already sees
+on the order, refund and complaint screens, and they are a nudge rather than a second set of paperwork.
 
 ---
 
@@ -203,7 +271,7 @@ Two things about cards are impossible, and the design follows them:
   arrives as NEFT/IMPS settlement, and the UPI app will never show it. Cards and UPI are two
   different rails that happen to end in the same account.
 * **This app never sees a card number.** A PAN/expiry/CVV entered into our own form would put us
-  in full PCI-DSS scope (and a SQLite file on a laptop is not a card store). So card payment is a
+  in full PCI-DSS scope (and an ordinary Postgres row is not a card vault). So card payment is a
   **hosted checkout**: the gateway renders the card form on its own page, and it reports the
   result back to us over a signed webhook.
 
@@ -302,7 +370,9 @@ payouts. Budget a week for onboarding, not an afternoon.
 ```
 prisma/schema.prisma        Order (channel CAFE|BOOKS), OrderItem (optional bookId), Book,
                             Customer, MenuItem, User, PaymentSetting (encrypted VPA), PaymentEvent,
-                            RefundRequest, Complaint (public viewToken), CaseEvent
+                            RefundRequest, Complaint (public viewToken), CaseEvent,
+                            ActivityEntry (the staff feed, which is a queue rather than an archive),
+                            VisitorSlot (a tab that was on a page in the last ninety seconds)
 src/lib/payments/
   status.ts                 payment + order state machines (channel-aware), customer copy
   upi.ts                    upi://pay URI builder and parser
@@ -318,9 +388,14 @@ src/lib/{refunds,case-log}.ts  the two DB write paths (compare-and-swap + audit 
 src/lib/cases.ts            every queue and panel the staff screens read
 src/lib/inventory/ledger.ts stock arithmetic with no database in it (clamps at zero, records shortfalls)
 src/lib/inventory/stock.ts  the shelf: consume on PAID, counts, adjustments, par levels, books ledger
-src/lib/activity.ts         in-memory presence (90s TTL) + the event feed behind the SSE stream
-src/lib/books.ts            catalogue reads, book orders, storage path guard, file + cover reads
-src/lib/{money,db,crypto,settings,orders}.ts
+src/lib/activity.ts         presence rows (90s) + the event queue, both in Postgres
+src/lib/books.ts            catalogue reads, book orders, stored-file reads through the guard
+src/lib/storage-path.ts     the one validator of a stored address — no server, so it is testable
+src/lib/storage.ts          write/read a blob object (Vercel Blob, `BLOB_READ_WRITE_TOKEN`)
+src/lib/uploads.ts          cover + PDF intake: size caps, safe file names, then storage.ts
+src/lib/db-client.ts        the Postgres pool + Prisma client, shared by the app and the scripts
+src/lib/db.ts               the lazy `prisma` the app imports
+src/lib/{money,crypto,settings,orders}.ts
 src/lib/pay/window.ts       the shop's 5-minute payment request window (countdown maths, nothing else)
 src/lib/auth/session.ts     signed cookie (5 idle minutes) + requireStaff/requireAdmin/extendSession
 src/lib/auth/guard.ts       staffOrSignIn(): the page-side check that redirects instead of throwing
@@ -345,12 +420,12 @@ src/app/
                             cafe staff, same queues scoped to channel = 'CAFE' (sign-in);
                             /inventory is admin-only
   api/pay/[token]/status    polling · api/dl/[token]/[bookId]  ebook download
-                            api/visit + api/activity/stream  presence and the live feed
-                            api/covers/[...path]  uploaded cover art
+                            api/visit + api/activity/poll  presence and the live feed
                             api/webhook/[provider] · api/card/test-checkout
-tests/                      80 tests, incl. decoding the QR image back to text
+tests/                      90 tests, incl. decoding the QR image back to text
 scripts/staff.ts            staff:add / staff:rotate / staff:list — passwords typed at a silent prompt
-scripts/setup-env.mjs       writes .env with a random APP_SECRET, never overwriting one
+scripts/hidden-prompt.ts    the prompt every terminal script shares, and `closePrompt()`
+scripts/setup-env.ts        appends the keys .env is missing; never rewrites one it did not write
 ```
 
 **Security notes**
@@ -402,7 +477,8 @@ one frame, all three copy blocks, no animation.
 ## Tests
 
 ```bash
-npm test        # 80 unit tests (status machine, UPI URI, money, crypto, QR image decode, card webhook, case rules, payment window, stock ledger)
+npm test        # 90 unit tests: status machine, UPI URI, money, crypto, QR image decode, card
+                # webhook, case rules, payment window, stock ledger, stored file addresses
 npm run lint
 ```
 
@@ -433,6 +509,14 @@ count below zero (it records what it could not give instead), a physical count s
 rather than the new total so the ledger still explains itself, `-0` is never written as a movement, and
 an item with no par level reads "not set" rather than "low" on every row. The module is pure Node with
 no database in it, which is why those rules can be asserted at all.
+
+`tests/storage.test.ts` holds the door that decides which file address the app will fetch. It accepts
+the shape Vercel Blob hands back, and refuses the disk-era values an old row or a typed-in field could
+still carry — `storage/books/play.pdf`, `./`, `/` — plus plain text, `http`, a host that only ends up
+looking like the storage host, a port, credentials, a query string, and a nested path. The dots are
+settled by the URL parser before the folder is judged, so `..` can only land inside `storage/`, never
+climb out of it, and the test says so rather than leaving that to a comment. The same module is what
+the writer uses to name an object, so a name it would refuse to read is a name it cannot produce.
 
 The checks below were each run by hand in a browser against a production build — add them as a
 regression suite when the app grows enough to deserve one:
@@ -501,13 +585,17 @@ table checked against `npm run build`)
     page and on `/complaint/<code>`. An empty answer is refused before sending.
 30. A complaint from a book page — no order behind it — gets the same tracking link, and its status
     page names the book instead of an order. Neither one can see the other's thread.
-31. Both staff areas hold one SSE connection: the pill reads *Live*, an arrival on `/cafe` appears
-    in the feed without a reload, and the visitor count ages out on the 90-second TTL.
+31. Both staff areas watched one SSE connection: the pill read *Live*, an arrival on `/cafe` appeared
+    in the feed without a reload, and the visitor count aged out on the 90-second TTL. That is what
+    was *last* checked by hand — the queue is in Postgres now and the strip polls, so the same two
+    things need looking at again on the deployed site: a pill that goes Live, and an arrival that
+    appears without a reload.
 32. A new title with a `.webp` cover and a PDF saves as `published = false` + `submittedAt`; `/`
     omits it and `/books/<slug>` answers 404 until it is published.
-33. The review queue reads *FILE IS READY* and renders the uploaded cover through
-    `/api/covers/…`. Publish sets `published = true`, clears `submittedAt`, and the storefront shows
-    the title with its own cover.
+33. The review queue reads *File is ready* and renders the uploaded cover from its stored address,
+    which is a full `https://….blob.vercel-storage.com/…` URL now that there is no covers route.
+    Publish sets `published = true`, clears `submittedAt`, and the storefront shows the title with
+    its own cover.
 34. A cashier gets the read-only notice on that queue and every Payment Settings field disabled —
     and bypassing the form still returns *"Only an admin…"* from `reviewBookAction` and
     `savePaymentSettingsAction`.
@@ -542,6 +630,24 @@ table checked against `npm run build`)
     `shortByUnits = 48` with the order code in the note — the payment was never refused, because the
     money arriving is the fact and the count is bookkeeping. Undoing the test was itself recorded as a
     `COUNT` row; no number on this page is ever changed without leaving a line behind.
+
+**The move to Postgres and Blob, and what it owes a re-run**
+
+Everything above was checked against a local SQLite database and files on this disk. Two of those
+checks cannot be repeated until a hosted database and a blob store exist, because the thing being
+tested no longer has a local home:
+
+43. A cover upload and a PDF upload write to Vercel Blob and come back as a URL the review queue
+    renders — which needs a real `BLOB_READ_WRITE_TOKEN`, since a local run with no token refuses
+    the upload and says so.
+44. The download route streams the object rather than the disk: 403 before `PAID`, a real `%PDF`
+    after it, and a `content-disposition` the browser saves under the title's name.
+45. The live strip across two different machines. One process could always see its own events; the
+    point of the queue being in the database is that a claim published by request A rings on a
+    dashboard held by request B.
+
+None of these were run in this change, and the app does not start locally until a Postgres URL is in
+`.env` — that is the honest state of it, and it is the first thing to do after provisioning.
 
 Still needing the one human click, because a password is not something this agent may type: the count
 and reorder-level forms in a browser, the tab actually missing for a cashier sign-in, and the chime

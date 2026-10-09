@@ -22,10 +22,11 @@ const stamp = new Intl.DateTimeFormat('en-IN', {
 export default async function AdminVerificationPage() {
   const staff = await requireStaff();
 
-  const [pending, recent, counts] = await Promise.all([
+  const [pending, recent, counts, events] = await Promise.all([
     listOrdersByPaymentStatus(['PAYMENT_VERIFICATION_PENDING'], 100),
     listOrdersByPaymentStatus(['PAID', 'FAILED', 'CANCELLED'], 12),
     countOrdersByPaymentStatus(),
+    activityFeed(14),
   ]);
 
   const rows: VerificationRow[] = pending.map((order) => ({
@@ -64,7 +65,7 @@ export default async function AdminVerificationPage() {
         <Stat label="Failed / cancelled" value={(counts.FAILED ?? 0) + (counts.CANCELLED ?? 0)} tone="rose" />
       </dl>
 
-      <LiveActivity initialEvents={activityFeed(14)} scope="CAFE" />
+      <LiveActivity initialEvents={events} scope="CAFE" />
 
       <section className="space-y-3">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">

@@ -10,65 +10,24 @@
  * printed in this project's README, so they are the first thing to replace on any
  * machine that is not your own.
  */
-import { createInterface } from 'node:readline';
-import { PrismaClient } from '@/generated/prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
+import { ask, askHidden, closePrompt } from './hidden-prompt';
+import { createPrismaClient } from '../src/lib/db-client';
 import { hashPassword } from '../src/lib/crypto';
 
-const prisma = new PrismaClient({
-  adapter: new PrismaBetterSqlite3({ url: process.env.DATABASE_URL ?? 'file:./dev.db' }),
-});
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error(
+    'DATABASE_URL is missing, so there is no database to add a sign-in to. Put the Postgres connection string in .env.',
+  );
+  process.exit(1);
+}
+
+const prisma = createPrismaClient(connectionString);
 
 const MIN_PASSWORD = 12;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const ROLES = ['ADMIN', 'CASHIER'] as const;
 type Role = (typeof ROLES)[number];
-
-const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-function ask(question: string): Promise<string> {
-  return new Promise((resolve) => rl.question(question, (answer) => resolve(answer.trim())));
-}
-
-/**
- * Character-by-character stdin with the echo turned off, so the password does not
- * appear on screen or in a terminal recording. Ctrl-C still cancels.
- */
-function askHidden(question: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!process.stdin.isTTY) {
-      reject(new Error('This is not a terminal. Run it from a real prompt so the password stays hidden.'));
-      return;
-    }
-    process.stdout.write(question);
-    const chars: string[] = [];
-    // readline owns stdin for the visible prompts; hand it over while raw.
-    rl.pause();
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-
-    const finish = (value: string | null) => {
-      process.stdin.removeListener('data', onData);
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      rl.resume();
-      process.stdout.write('\n');
-      if (value === null) reject(new Error('cancelled'));
-      else resolve(value);
-    };
-
-    function onData(chunk: Buffer) {
-      for (const char of chunk.toString('utf8')) {
-        if (char === '\u0003') return finish(null); // Ctrl-C
-        if (char === '\r' || char === '\n') return finish(chars.join(''));
-        if (char === '\u007f' || char === '\b') chars.pop();
-        else if (char >= ' ') chars.push(char);
-      }
-    }
-
-    process.stdin.on('data', onData);
-  });
-}
 
 async function askPassword(): Promise<string> {
   while (true) {
@@ -183,6 +142,6 @@ main()
     process.exitCode = 1;
   })
   .finally(() => {
-    rl.close();
+    closePrompt();
     return prisma.$disconnect();
   });

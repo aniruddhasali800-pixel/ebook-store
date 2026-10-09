@@ -10,8 +10,7 @@ type Change = { id: string; decided: 'published' | 'sent back' };
 
 const FILE_COPY: Record<BookReviewRow['fileStatus'], { label: string; tone: string }> = {
   none: { label: 'No file attached', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
-  missing: { label: 'File is missing from storage', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
-  outside: { label: 'Path sits outside storage/', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
+  outside: { label: 'Address is not one this shop stored', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
   ok: { label: 'File is ready', tone: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
 };
 

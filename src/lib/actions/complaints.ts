@@ -80,7 +80,7 @@ export async function fileComplaintAction(
     },
   });
 
-  publishActivity({
+  await publishActivity({
     type: 'complaint',
     // Anything that is not a cafe order is answered in the book shop inbox, which
     // is where the chime has to be heard.

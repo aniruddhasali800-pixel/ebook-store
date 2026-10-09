@@ -309,7 +309,7 @@ export type BookReviewRow = {
   format: string;
   pages: number | null;
   filePath: string | null;
-  fileStatus: 'none' | 'ok' | 'missing' | 'outside';
+  fileStatus: 'none' | 'ok' | 'outside';
   coverUrl: string | null;
   submittedLabel: string;
   published: boolean;

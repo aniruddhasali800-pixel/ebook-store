@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   }
 
   const body = (payload ?? {}) as { visitorId?: unknown; page?: unknown };
-  const result = recordVisit({
+  const result = await recordVisit({
     visitorId: typeof body.visitorId === 'string' ? body.visitorId : undefined,
     page: typeof body.page === 'string' ? body.page : '/',
   });

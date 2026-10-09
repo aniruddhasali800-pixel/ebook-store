@@ -76,7 +76,7 @@ export async function requestRefundAction(
     },
   });
 
-  publishActivity({
+  await publishActivity({
     type: 'refund',
     channel: order.channel,
     headline: `Refund requested on #${order.orderId}`,
@@ -150,7 +150,7 @@ export async function decideRefundAction(
   }
 
   if (to === 'REFUNDED') {
-    publishActivity({
+    await publishActivity({
       type: 'refund',
       channel: refund.order.channel,
       headline: `Refund paid back on #${refund.order.orderId}`,

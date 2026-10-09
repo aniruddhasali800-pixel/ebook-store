@@ -8,8 +8,7 @@ export const metadata = { title: 'Catalogue' };
 
 const FILE_WARNING: Record<ReturnType<typeof fileStatusFor>, string | null> = {
   none: 'No file attached — a buyer who pays gets nothing.',
-  missing: 'The file path is set but the file is not there.',
-  outside: 'The path sits outside storage/ and will never be served.',
+  outside: 'That address is not a file this shop stored, so it will never be served.',
   ok: null,
 };
 

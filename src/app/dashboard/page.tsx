@@ -29,7 +29,7 @@ const stamp = new Intl.DateTimeFormat('en-IN', {
 
 export default async function DashboardPage() {
   const staff = await staffOrSignIn('/dashboard');
-  const [pending, recent, counts, revenue, refunds, complaints, submitted] = await Promise.all([
+  const [pending, recent, counts, revenue, refunds, complaints, submitted, feed] = await Promise.all([
     listOrdersByPaymentStatus(['PAYMENT_VERIFICATION_PENDING'], 60, 'BOOKS'),
     listOrdersByPaymentStatus(['PAID', 'FAILED', 'CANCELLED'], 10, 'BOOKS'),
     countOrdersByPaymentStatus('BOOKS'),
@@ -37,6 +37,7 @@ export default async function DashboardPage() {
     listRefundQueue('BOOKS'),
     listComplaintInbox('BOOKS'),
     listBookReviewQueue(),
+    activityFeed(14),
   ]);
 
   const refundCases = countPendingCases(refunds);
@@ -85,7 +86,7 @@ export default async function DashboardPage() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
               Buyers who say they paid
             </h2>
-            <LiveActivity initialEvents={activityFeed(14)} scope="BOOKS" />
+            <LiveActivity initialEvents={feed} scope="BOOKS" />
           </div>
           <PaymentVerification
             rows={rows}
