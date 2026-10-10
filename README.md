@@ -122,6 +122,16 @@ when `env('DATABASE_URL')` was resolved at config load.
 
 4. Re-enter the payee VPA in Payment Settings. It is stored encrypted with `APP_SECRET`, so the
    copy in an old local database will not decrypt into a new one.
+5. Ask the deployment what it can reach:
+
+   ```bash
+   curl https://<your-site>/api/health
+   ```
+
+   It answers 200 even when things are wrong, because a health check that 500s cannot be told apart
+   from the failure it is describing. The answer names which variables exist, whether one query
+   completes, and whether the tables are there yet — never a connection string, a host or a secret,
+   not even a masked fragment of one.
 
 Nothing here runs `db push` during a deploy on purpose: a build that quietly alters the shop's
 schema is not something to discover after the fact. And do not set a `TZ` variable expecting it to
@@ -426,6 +436,7 @@ src/app/
                             /inventory is admin-only
   api/pay/[token]/status    polling · api/dl/[token]/[bookId]  ebook download
                             api/visit + api/activity/poll  presence and the live feed
+                            api/health  what the deployment can reach: no secret in the answer
                             api/webhook/[provider] · api/card/test-checkout
 tests/                      94 tests, incl. decoding the QR image back to text
 scripts/staff.ts            staff:add / staff:rotate / staff:list — passwords typed at a silent prompt
