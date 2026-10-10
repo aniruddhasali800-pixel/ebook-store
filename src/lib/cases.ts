@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { coverUrlFor, fileStatusFor } from '@/lib/books';
 import { formatINR } from '@/lib/money';
 import { COMPLAINT_STATUS_LABELS, type ComplaintStatus } from '@/lib/case-log';
+import { stampDateTime, stampDay } from '@/lib/shop-clock';
 import {
   REFUND_CUSTOMER_COPY,
   REFUND_REFUSALS,
@@ -15,14 +16,11 @@ import {
 /**
  * Everything the refund and complaint screens need, computed in one place.
  *
- * Dates are formatted here rather than in the browser because the shop and the
- * buyer must read the same deadline: a client-side `toLocaleString` would show a
- * customer in Mumbai and a staffer in London different "due" times for one clock.
+ * Dates are formatted through `shop-clock.ts` rather than in the browser because
+ * the shop and the buyer must read the same deadline: a client-side
+ * `toLocaleString` would show a customer in Mumbai and a staffer in London
+ * different "due" times for one clock.
  */
-
-const timeZone = process.env.TZ ?? 'Asia/Kolkata';
-const stamp = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone });
-const dayStamp = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeZone });
 
 /** What the buyer sees about one refund on their receipt page. */
 export type RefundView = {
@@ -113,8 +111,8 @@ export async function refundPanelProps(order: {
   const eligibility = refundEligibility({ ...order, refunds }, now);
   const history: RefundView[] = refunds.map((refund) => ({
     status: refund.status as RefundStatus,
-    requestedLabel: stamp.format(refund.requestedAt),
-    dueLabel: stamp.format(refund.reviewDueAt),
+    requestedLabel: stampDateTime(refund.requestedAt),
+    dueLabel: stampDateTime(refund.reviewDueAt),
     decisionLabel: REFUND_STATUS_LABELS[refund.status as RefundStatus],
     copy: refundCustomerCopyFor(refund.status as RefundStatus, refund.reviewDueAt),
     note: refund.decisionNote,
@@ -126,9 +124,9 @@ export async function refundPanelProps(order: {
     amountLabel: formatINR(order.totalInPaise),
     blockedReason: eligibility.eligible ? null : REFUND_REFUSALS[eligibility.reason],
     requestUntilLabel: eligibility.eligible
-      ? stamp.format(eligibility.requestUntil)
+      ? stampDateTime(eligibility.requestUntil)
       : eligibility.requestUntil
-        ? stamp.format(eligibility.requestUntil)
+        ? stampDateTime(eligibility.requestUntil)
         : null,
     history,
   };
@@ -141,7 +139,7 @@ export async function refundPanelProps(order: {
 function refundCustomerCopyFor(status: RefundStatus, dueAt: Date): string {
   if (status === 'REQUESTED') return REFUND_CUSTOMER_COPY.REQUESTED;
   if (status === 'APPROVED') {
-    return `${REFUND_CUSTOMER_COPY.APPROVED} The shop committed to an answer by ${stamp.format(dueAt)}.`;
+    return `${REFUND_CUSTOMER_COPY.APPROVED} The shop committed to an answer by ${stampDateTime(dueAt)}.`;
   }
   return REFUND_CUSTOMER_COPY[status];
 }
@@ -165,9 +163,9 @@ export async function complaintViews(where: { orderId: string }): Promise<Compla
     subject: complaint.subject,
     body: complaint.body,
     statusLabel: COMPLAINT_STATUS_LABELS[complaint.status as ComplaintStatus],
-    createdAtLabel: stamp.format(complaint.createdAt),
+    createdAtLabel: stampDateTime(complaint.createdAt),
     reply: complaint.reply,
-    answeredLabel: complaint.answeredAt ? stamp.format(complaint.answeredAt) : null,
+    answeredLabel: complaint.answeredAt ? stampDateTime(complaint.answeredAt) : null,
   }));
 }
 
@@ -207,8 +205,8 @@ export async function listRefundQueue(channel: 'BOOKS' | 'CAFE', limit = 80): Pr
     payoutVpa: refund.payoutVpa,
     status: refund.status as RefundStatus,
     decisionLabel: REFUND_STATUS_LABELS[refund.status as RefundStatus],
-    requestedLabel: stamp.format(refund.requestedAt),
-    dueLabel: stamp.format(refund.reviewDueAt),
+    requestedLabel: stampDateTime(refund.requestedAt),
+    dueLabel: stampDateTime(refund.reviewDueAt),
     overdue: refund.status === 'REQUESTED' || refund.status === 'APPROVED'
       ? refund.reviewDueAt.getTime() < now
       : false,
@@ -248,12 +246,12 @@ export async function listComplaintInbox(channel: 'BOOKS' | 'CAFE', limit = 100)
     source: complaint.source,
     status: complaint.status as ComplaintStatus,
     statusLabel: COMPLAINT_STATUS_LABELS[complaint.status as ComplaintStatus],
-    createdAtLabel: stamp.format(complaint.createdAt),
+    createdAtLabel: stampDateTime(complaint.createdAt),
     orderCode: complaint.order?.orderId ?? null,
     orderToken: complaint.order?.token ?? null,
     bookTitle: complaint.book?.title ?? null,
     reply: complaint.reply,
-    answeredLabel: complaint.answeredAt ? stamp.format(complaint.answeredAt) : null,
+    answeredLabel: complaint.answeredAt ? stampDateTime(complaint.answeredAt) : null,
     answeredByName: complaint.answeredBy?.name ?? null,
     viewToken: complaint.viewToken,
     overdue: complaint.status === 'OPEN' && reviewDeadlineAt(complaint.createdAt).getTime() < now,
@@ -290,9 +288,9 @@ export async function complaintByViewToken(viewToken: string): Promise<Complaint
     fromName: complaint.fromName,
     status: complaint.status as ComplaintStatus,
     statusLabel: COMPLAINT_STATUS_LABELS[complaint.status as ComplaintStatus],
-    createdAtLabel: dayStamp.format(complaint.createdAt),
+    createdAtLabel: stampDay(complaint.createdAt),
     reply: complaint.reply,
-    answeredLabel: complaint.answeredAt ? stamp.format(complaint.answeredAt) : null,
+    answeredLabel: complaint.answeredAt ? stampDateTime(complaint.answeredAt) : null,
     orderCode: complaint.order?.orderId ?? null,
     bookTitle: complaint.book?.title ?? null,
   };
@@ -341,7 +339,7 @@ export async function listBookReviewQueue(limit = 50): Promise<BookReviewRow[]> 
     filePath: book.filePath,
     fileStatus: fileStatusFor(book.filePath),
     coverUrl: coverUrlFor(book.coverPath),
-    submittedLabel: book.submittedAt ? stamp.format(book.submittedAt) : '—',
+    submittedLabel: book.submittedAt ? stampDateTime(book.submittedAt) : '—',
     published: book.published,
     reviewNote: book.reviewNote,
   }));

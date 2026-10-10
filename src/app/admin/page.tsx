@@ -8,16 +8,11 @@ import {
 import { PaymentVerification, type VerificationRow } from '@/components/PaymentVerification';
 import { PaymentStatus } from '@/components/PaymentStatus';
 import { formatINR } from '@/lib/money';
+import { stampDateTime } from '@/lib/shop-clock';
 import type { PaymentStatus as PaymentStatusValue } from '@/lib/payments/status';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Payment verification' };
-
-const stamp = new Intl.DateTimeFormat('en-IN', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-  timeZone: process.env.TZ ?? 'Asia/Kolkata',
-});
 
 export default async function AdminVerificationPage() {
   const staff = await requireStaff();
@@ -37,7 +32,7 @@ export default async function AdminVerificationPage() {
       .map((item) => `${item.name} × ${item.quantity}`)
       .join(', '),
     amountLabel: formatINR(order.totalInPaise),
-    submittedAt: stamp.format(order.updatedAt),
+    submittedAt: stampDateTime(order.updatedAt),
     paymentStatus: order.paymentStatus as PaymentStatusValue,
     paymentReference: order.paymentReference,
     verifiedByName: order.verifiedBy?.name ?? null,
@@ -103,7 +98,7 @@ export default async function AdminVerificationPage() {
                     {order.paymentReference ?? '—'}
                   </td>
                   <td className="px-4 py-3 text-xs text-zinc-500">
-                    {order.verifiedBy?.name ?? '—'} · {stamp.format(order.updatedAt)}
+                    {order.verifiedBy?.name ?? '—'} · {stampDateTime(order.updatedAt)}
                   </td>
                 </tr>
               ))}

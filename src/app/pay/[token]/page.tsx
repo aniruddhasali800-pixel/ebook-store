@@ -10,6 +10,7 @@ import { cardCheckoutEnabled } from '@/lib/payments/card-hosted';
 import { payWindowAt } from '@/lib/pay/window';
 import { maskVpa } from '@/lib/crypto';
 import { formatINR } from '@/lib/money';
+import { stampDateTime } from '@/lib/shop-clock';
 import type { OrderChannel, PaymentStatus as PaymentStatusValue } from '@/lib/payments/status';
 
 export const dynamic = 'force-dynamic';
@@ -98,7 +99,7 @@ export default async function PayPage({
           <p className="mt-3 text-xs text-zinc-500">Note: {order.note}</p>
         ) : null}
         <p className="mt-3 text-xs text-zinc-500">
-          Order placed {new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short' }).format(order.createdAt)}
+          Order placed {stampDateTime(order.createdAt)}
         </p>
       </section>
 

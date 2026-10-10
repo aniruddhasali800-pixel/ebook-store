@@ -16,16 +16,11 @@ import {
   sumPaidInPaise,
 } from '@/lib/payments/service';
 import { formatINR } from '@/lib/money';
+import { stampDateTime } from '@/lib/shop-clock';
 import type { PaymentStatus as PaymentStatusValue } from '@/lib/payments/status';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Shop dashboard' };
-
-const stamp = new Intl.DateTimeFormat('en-IN', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-  timeZone: process.env.TZ ?? 'Asia/Kolkata',
-});
 
 export default async function DashboardPage() {
   const staff = await staffOrSignIn('/dashboard');
@@ -49,7 +44,7 @@ export default async function DashboardPage() {
     customerLabel: order.customer.label,
     itemSummary: order.items.map((item) => item.name).join(', '),
     amountLabel: formatINR(order.totalInPaise),
-    submittedAt: stamp.format(order.updatedAt),
+    submittedAt: stampDateTime(order.updatedAt),
     paymentStatus: order.paymentStatus as PaymentStatusValue,
     paymentReference: order.paymentReference,
     verifiedByName: order.verifiedBy?.name ?? null,
@@ -154,7 +149,7 @@ export default async function DashboardPage() {
                     {order.paymentReference ?? '—'}
                   </td>
                   <td className="px-4 py-3 text-xs whitespace-nowrap text-zinc-500">
-                    {stamp.format(order.updatedAt)}
+                    {stampDateTime(order.updatedAt)}
                   </td>
                 </tr>
               ))}

@@ -124,7 +124,11 @@ when `env('DATABASE_URL')` was resolved at config load.
    copy in an old local database will not decrypt into a new one.
 
 Nothing here runs `db push` during a deploy on purpose: a build that quietly alters the shop's
-schema is not something to discover after the fact.
+schema is not something to discover after the fact. And do not set a `TZ` variable expecting it to
+move the shop's clock — nothing reads it any more. Every date is stamped in IST by
+`src/lib/shop-clock.ts`, because the shop is in India whichever region a function happened to run
+in, and because the value Vercel's builder reports for `TZ` is one `Intl` refuses: it failed this
+build at page-data collection before the code could show anyone a wrong minute.
 
 ---
 
@@ -384,6 +388,7 @@ src/lib/payments/
   service.ts                transitionPayment(), intent rebuild, queues, kitchen ladder
 src/lib/case-rules.ts       refund + complaint state machines, working-day clock, buyer copy
 src/lib/case-status.ts      status vocabularies and labels, shared by client and server
+src/lib/shop-clock.ts       the shop's own IST clock for every date the shop prints
 src/lib/{refunds,case-log}.ts  the two DB write paths (compare-and-swap + audit row)
 src/lib/cases.ts            every queue and panel the staff screens read
 src/lib/inventory/ledger.ts stock arithmetic with no database in it (clamps at zero, records shortfalls)
@@ -422,7 +427,7 @@ src/app/
   api/pay/[token]/status    polling · api/dl/[token]/[bookId]  ebook download
                             api/visit + api/activity/poll  presence and the live feed
                             api/webhook/[provider] · api/card/test-checkout
-tests/                      90 tests, incl. decoding the QR image back to text
+tests/                      94 tests, incl. decoding the QR image back to text
 scripts/staff.ts            staff:add / staff:rotate / staff:list — passwords typed at a silent prompt
 scripts/hidden-prompt.ts    the prompt every terminal script shares, and `closePrompt()`
 scripts/setup-env.ts        appends the keys .env is missing; never rewrites one it did not write
@@ -486,8 +491,8 @@ one frame, all three copy blocks, no animation.
 ## Tests
 
 ```bash
-npm test        # 90 unit tests: status machine, UPI URI, money, crypto, QR image decode, card
-                # webhook, case rules, payment window, stock ledger, stored file addresses
+npm test        # 94 unit tests: status machine, UPI URI, money, crypto, QR image decode, card
+                # webhook, case rules, payment window, stock ledger, stored file addresses, clock
 npm run lint
 ```
 
@@ -535,6 +540,14 @@ looking like the storage host, a port, credentials, a query string, and a nested
 settled by the URL parser before the folder is judged, so `..` can only land inside `storage/`, never
 climb out of it, and the test says so rather than leaving that to a comment. The same module is what
 the writer uses to name an object, so a name it would refuse to read is a name it cannot produce.
+
+`tests/shop-clock.test.ts` is the one that only exists because a deploy broke. Dates come from
+`src/lib/shop-clock.ts`, which never asks the machine what zone it is in, so the test sets
+`process.env.TZ` to the value Vercel's builder reports (`:UTC`, which `Intl` refuses), and to a real
+zone that would have quietly shifted every deadline instead of failing loudly — `America/New_York` —
+and asserts the buyer is told the same minute either way. It also checks that an instant five and a
+half hours from IST midnight lands on different calendar days in the two zones, which is the case a
+refund deadline is most likely to be argued about.
 
 The checks below were each run by hand in a browser against a production build — add them as a
 regression suite when the app grows enough to deserve one:
